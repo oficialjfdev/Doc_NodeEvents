@@ -85,6 +85,28 @@ Os pontos que usam esse sistema sao:
 - `NpcScaling.MeleeDamageToCore.AboveNominalCurve`
 - `NpcScaling.MeleeDamageToCore.BelowNominalCurve`
 
+**[ALTERADO]** Formato de serializacao:
+
+- Campos auxiliares como `AboveNominalCurve`, `BelowNominalCurve`, `GrowthCurve` e `DifficultyGrowthCurve` usam um objeto `WavePresetCurveSettings`.
+- O runtime atual nao aceita o shorthand numerico direto nesses campos.
+- Exemplo invalido:
+
+```json
+"AboveNominalCurve": 4
+```
+
+- Exemplo valido:
+
+```json
+"AboveNominalCurve": {
+  "CurveType": 4,
+  "HybridLinearPart": 0.5,
+  "BaseSlope": 1.0
+}
+```
+
+- A mesma regra vale para `BelowNominalCurve`, `GrowthCurve` e `DifficultyGrowthCurve`.
+
 ### Formula conceitual base
 
 O avaliador de curva recebe um `input` positivo e produz `curveUnits`.
@@ -520,7 +542,7 @@ difficultyExtra = floor(curveUnits) ou round(curveUnits)
 - Tipo: `float`
 - Folga minima que o runtime tenta preservar entre o termino do ultimo batch de spawn e o fim da wave.
 - Valor padrao: `5`.
-- Se o intervalo atual nao permitir que todos os NPCs caibam dentro de `WaveDuration - CompletionReserveSeconds`, o runtime tenta resolver isso primeiro reduzindo o intervalo e depois aumentando a quantidade de spawns por tick.
+- Se o intervalo atual nao permitir que todos os NPCs caibam dentro de `WaveDuration - CompletionReserveSeconds`, o runtime tenta recalcular o batch e o intervalo para encaixar a fila respeitando os limites configurados.
 
 ### `MaxSpawnsPerTick` **[NOVO]**
 
@@ -541,9 +563,28 @@ difficultyExtra = floor(curveUnits) ou round(curveUnits)
 ### Comportamento de runtime **[ALTERADO]**
 
 - Os pontos de spawn agora sao escolhidos em ordem aleatoria.
-- O runtime deixa o batch em `1` quando a wave ja cabe dentro do tempo.
-- O batch so aumenta quando necessario para encaixar a fila dentro da duracao da wave respeitando a folga configurada.
+- O runtime calcula primeiro `availableTime = max(0, WaveDuration - CompletionReserveSeconds)`.
+- Depois mede quantos batches cabem no intervalo atual.
+- Se a wave ja couber com `batch = 1`, esse comportamento e preservado.
+- Se nao couber, o runtime calcula o menor batch necessario para o intervalo atual, respeitando `MaxSpawnsPerTick`.
+- Em seguida ele tenta comprimir o intervalo ate o minimo necessario para esse batch, respeitando `MinimumSpawnIntervalSeconds`.
+- Se ainda assim nao couber e `MaxSpawnsPerTick` permitir, o batch pode subir novamente.
 - O intervalo real usado pela wave pode diferir do intervalo base do preset por causa da curva de dificuldade e do ajuste para encaixe no tempo total.
+- Se `MaxSpawnsPerTick = 1`, o runtime nao pode abrir batches maiores e tenta resolver o encaixe apenas reduzindo o intervalo.
+
+### Formula conceitual de encaixe **[NOVO]**
+
+```text
+availableTime = max(0, WaveDuration - CompletionReserveSeconds)
+spawnBatches = ceil(totalCount / SpawnBatchSize)
+spawnTotalAproximado = (spawnBatches - 1) * SpawnIntervalSeconds
+```
+
+Leitura pratica:
+
+- O ultimo batch precisa caber antes do fim de `availableTime`.
+- A folga configurada nao e uma promessa absoluta quando `MaxSpawnsPerTick` ou `MinimumSpawnIntervalSeconds` impedem mais ajuste.
+- Quando isso acontece, o runtime respeita esses limites mesmo que a fila fique apertada.
 
 ### `MeleeCoreHitIntervalSeconds`
 
