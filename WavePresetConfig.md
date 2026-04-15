@@ -4,6 +4,11 @@
 
 Este arquivo documenta o comportamento real do preset de waves usado pelo `NodeEvents`.
 
+## Marcacao desta revisao
+
+- `**[NOVO]**`: campo, comportamento ou trecho adicionado nesta revisao.
+- `**[ALTERADO]**`: comportamento antigo que mudou ou foi corrigido para refletir a runtime atual.
+
 O preset e carregado pelo nome do arquivo usado no comando:
 
 ```text
@@ -32,10 +37,10 @@ Observacoes importantes:
 
 - O nome operacional do preset e o nome do arquivo.
 - O campo `PresetName` e metadata interna e nao e usado como chave principal de busca.
-- Quando existe `WavePreset` ativo, o preset passa a ser a fonte de verdade para `SpawnCount`, `WaveTiming` e `SpawnFlow` da sessao.
-- Nesse caminho com preset, `zone.PlayerScaling` da configuracao da zona nao e aplicado por cima do resultado do preset.
-- A dificuldade e recalculada no fim de cada wave e capturada na fila da proxima wave.
-- NPCs que ja estao vivos nao sao reescalados quando a dificuldade muda; apenas NPCs novos da nova wave usam a dificuldade recalculada.
+- **[ALTERADO]** Quando existe `WavePreset` ativo, o preset passa a ser a fonte de verdade para `SpawnCount`, `WaveTiming` e `SpawnFlow` da sessao.
+- **[ALTERADO]** Nesse caminho com preset, `zone.PlayerScaling` da configuracao da zona nao e aplicado por cima do resultado do preset.
+- **[ALTERADO]** A dificuldade e recalculada no fim de cada wave e capturada na fila da proxima wave.
+- **[ALTERADO]** NPCs que ja estao vivos nao sao reescalados quando a dificuldade muda; apenas NPCs novos da nova wave usam a dificuldade recalculada.
 
 ## Enums numericos
 
@@ -68,6 +73,8 @@ Os pontos que usam esse sistema sao:
 - `Difficulty.WaveCurve`
 - `WaveTiming.AboveNominalCurve`
 - `WaveTiming.BelowNominalCurve`
+- **[NOVO]** `SpawnFlow.AboveNominalCurve`
+- **[NOVO]** `SpawnFlow.BelowNominalCurve`
 - `SpawnCount.DifficultyScaling.GrowthCurve`
 - `Roles[].DifficultyGrowthCurve`
 - `NpcPools[].DifficultyGrowthCurve`
@@ -467,19 +474,76 @@ difficultyExtra = floor(curveUnits) ou round(curveUnits)
 - Curva opcional para transformar o bonus bruto de dificuldade em spawns extras.
 - Se nao existir, o comportamento cai no linear antigo.
 
-## `SpawnFlow`
+## `SpawnFlow` **[ALTERADO]**
 
-### `SpawnIntervalSeconds`
+### `SpawnIntervalSeconds` **[ALTERADO]**
 
 - Tipo: `float`
 - Intervalo base entre um spawn e outro dentro da mesma wave.
+- Esse valor ainda e o ponto de partida do runtime.
 
-### `MinimumSpawnIntervalSeconds`
+### `SecondsPer10DifficultyAboveNominal` **[NOVO]**
+
+- Tipo: `float`
+- Ajuste aplicado ao intervalo quando a dificuldade esta acima de `100`.
+- O input bruto e `abs(difficultyPercent - 100) / 10`.
+- Valor negativo acelera os spawns.
+- Valor positivo desacelera os spawns.
+
+### `SecondsPer10DifficultyBelowNominal` **[NOVO]**
+
+- Tipo: `float`
+- Ajuste aplicado ao intervalo quando a dificuldade esta abaixo de `100`.
+- O input bruto e `abs(difficultyPercent - 100) / 10`.
+
+### `AboveNominalCurve` **[NOVO]**
+
+- Tipo: `WavePresetCurveSettings`
+- Curva opcional para transformar o input bruto de dificuldade acima de `100` antes de multiplicar por `SecondsPer10DifficultyAboveNominal`.
+- Se nao existir, o comportamento cai no linear antigo.
+
+### `BelowNominalCurve` **[NOVO]**
+
+- Tipo: `WavePresetCurveSettings`
+- Curva opcional para transformar o input bruto de dificuldade abaixo de `100` antes de multiplicar por `SecondsPer10DifficultyBelowNominal`.
+- Se nao existir, o comportamento cai no linear antigo.
+
+### `MinimumSpawnIntervalSeconds` **[ALTERADO]**
 
 - Tipo: `float`
 - Piso do intervalo real.
-- O plugin faz `max(MinimumSpawnIntervalSeconds, SpawnIntervalSeconds)`.
+- O plugin faz `max(MinimumSpawnIntervalSeconds, intervaloResolvido)`.
 - Em runtime o intervalo final ainda nao cai abaixo de `0.1`.
+
+### `CompletionReserveSeconds` **[NOVO]**
+
+- Tipo: `float`
+- Folga minima que o runtime tenta preservar entre o termino do ultimo batch de spawn e o fim da wave.
+- Valor padrao: `5`.
+- Se o intervalo atual nao permitir que todos os NPCs caibam dentro de `WaveDuration - CompletionReserveSeconds`, o runtime tenta resolver isso primeiro reduzindo o intervalo e depois aumentando a quantidade de spawns por tick.
+
+### `MaxSpawnsPerTick` **[NOVO]**
+
+- Tipo: `int`
+- Limite maximo de NPCs que podem ser disparados no mesmo tick de spawn.
+- `0` significa sem limite explicito pelo preset, deixando o runtime aumentar o batch conforme a necessidade da wave.
+- `1` preserva o comportamento antigo de um unico spawn por tick.
+- Se esse limite for baixo demais para caber dentro da folga desejada, o runtime respeita o limite mesmo assim.
+
+### `AllowImmediateSpawnPointRepeat` **[NOVO]**
+
+- Tipo: `bool`
+- Controla se o mesmo ponto de spawn pode ser usado duas vezes seguidas.
+- Valor padrao: `false`.
+- Quando `false` e a zona tem dois ou mais pontos de spawn, o runtime sorteia um ponto aleatorio diferente do ultimo usado.
+- Quando `true`, qualquer ponto pode ser repetido imediatamente.
+
+### Comportamento de runtime **[ALTERADO]**
+
+- Os pontos de spawn agora sao escolhidos em ordem aleatoria.
+- O runtime deixa o batch em `1` quando a wave ja cabe dentro do tempo.
+- O batch so aumenta quando necessario para encaixar a fila dentro da duracao da wave respeitando a folga configurada.
+- O intervalo real usado pela wave pode diferir do intervalo base do preset por causa da curva de dificuldade e do ajuste para encaixe no tempo total.
 
 ### `MeleeCoreHitIntervalSeconds`
 
@@ -704,7 +768,7 @@ Se `AboveNominalCurve` ou `BelowNominalCurve` nao existirem, o runtime usa o fal
 - Teto do multiplicador final.
 - Se for `0` ou menor, nao existe teto maximo.
 
-## `NpcScaling.Health`
+## `NpcScaling.Health` **[ALTERADO]**
 
 Uso atual no codigo:
 
@@ -727,13 +791,13 @@ Compatibilidade legada:
 - nesse fallback legado ainda existe scaling de vida e de alguns campos de combate por reflexao
 - isso foi mantido para nao quebrar o comportamento antigo quando nenhuma curva real de `Health` esta empurrando o fator para fora de `1`
 
-## `NpcScaling.MeleeDamageToPlayers`
+## `NpcScaling.MeleeDamageToPlayers` **[ALTERADO]**
 
 - Aplica multiplicador no dano que NPCs do evento causam aos jogadores.
 - So entra quando o role pode atacar jogadores.
 - O multiplicador agora tambem respeita `CurveType`, `AboveNominalCurve` e `BelowNominalCurve`.
 
-## `NpcScaling.MeleeDamageToCore`
+## `NpcScaling.MeleeDamageToCore` **[ALTERADO]**
 
 - Aplica multiplicador no dano causado ao core.
 - O dano final e:
@@ -744,7 +808,7 @@ CoreDamageBase * multiplicadorDaRegra
 
 - O multiplicador agora tambem respeita `CurveType`, `AboveNominalCurve` e `BelowNominalCurve`.
 
-## Exemplo de configuracao com curvas novas
+## Exemplo de configuracao com curvas novas **[ALTERADO]**
 
 ```json
 {
@@ -774,6 +838,19 @@ CoreDamageBase * multiplicadorDaRegra
       "BaseSlope": 1.0,
       "SaturationFactor": 0.3
     }
+  },
+  "SpawnFlow": {
+    "SpawnIntervalSeconds": 2.0,
+    "MinimumSpawnIntervalSeconds": 0.2,
+    "SecondsPer10DifficultyAboveNominal": -0.2,
+    "AboveNominalCurve": {
+      "CurveType": 5,
+      "SmoothingFactor": 0.15,
+      "BaseSlope": 1.0
+    },
+    "CompletionReserveSeconds": 5.0,
+    "MaxSpawnsPerTick": 3,
+    "AllowImmediateSpawnPointRepeat": false
   },
   "SpawnCount": {
     "DifficultyScaling": {
@@ -833,5 +910,8 @@ CoreDamageBase * multiplicadorDaRegra
 - Use `Aggressive` quando quiser escalada tardia mais forte.
 - Use `Saturating` quando quiser crescimento que perde forca nas dificuldades muito altas.
 - Use `Bands` para dar pequenos ajustes por faixa sem criar uma curva totalmente nova.
+- Use `SpawnFlow.MaxSpawnsPerTick = 1` quando quiser preservar o comportamento antigo de um spawn por tick.
+- Use `SpawnFlow.CompletionReserveSeconds` para garantir que a wave termine com folga antes do timeout.
+- Use `SpawnFlow.AllowImmediateSpawnPointRepeat = true` apenas se quiser aceitar repeticao imediata do mesmo ponto de spawn.
 - Use `PreferHigherUnlockWeight` para empurrar a rolagem de pools mais avancados sem precisar inflar `SelectionWeight` manualmente.
 - Lembre que `MeleeCoreMoveSpeed` continua reservado e ainda nao altera a runtime.
